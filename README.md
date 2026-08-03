@@ -1,4 +1,4 @@
-# antep — Site portfolio d'Audrey Ntep
+# antep — Site portfolio
 
 Portfolio single-file (HTML/CSS/JS), bilingue FR/EN, aux couleurs de la marque **antep**.
 
