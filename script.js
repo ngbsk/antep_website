@@ -9,12 +9,9 @@
    ========================================================================= */
 
 (function(){
-  var lang = 'fr'; // langue courante ('fr' par défaut)
-
   // Applique une langue : remplace le contenu des éléments porteurs de
   // data-fr / data-en, puis met à jour l'état visuel du sélecteur FR/EN.
   function applyLang(l){
-    lang = l;
     document.documentElement.lang = l;
     document.querySelectorAll('[data-fr]').forEach(function(el){
       var val = el.getAttribute('data-'+l);

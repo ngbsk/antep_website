@@ -1,4 +1,4 @@
-# antep — Site portfolio
+# antep — Site portfolio d'Audrey Ntep
 
 Portfolio statique bilingue **FR / EN**, aux couleurs de la marque **antep** (thème sombre : navy, teal, rose, orange).
 
@@ -6,27 +6,51 @@ Portfolio statique bilingue **FR / EN**, aux couleurs de la marque **antep** (th
 
 ```
 antep_website/
-├── index.html     # Structure et contenu de la page
-├── styles.css     # Styles (thème, mise en page, responsive) — commentés
-├── script.js      # Interactions : bascule FR/EN, menu, filtres, animations — commenté
-├── logo.png       # Logo AN (nav + favicon)
-├── robots.txt     # Directives crawlers (indexation bloquée)
-└── README.md
+├── index.html              # Structure et contenu de la page
+├── styles.css              # Styles (thème, mise en page, responsive) — commentés
+├── script.js               # Interactions : bascule FR/EN, menu, filtres, animations — commenté
+├── logo.png                # Logo AN (nav + favicon)
+├── robots.txt              # Directives crawlers (indexation bloquée)
+├── package.json            # Outils de qualité (dev uniquement, aucun runtime)
+├── .htmlhintrc / .htmlvalidate.json / .stylelintrc.json / eslint.config.mjs
+├── lighthouserc.json       # Config de l'audit Lighthouse
+└── .github/workflows/ci.yml
 ```
+
+Le site lui-même n'a **aucune dépendance runtime** : `package.json` ne sert qu'aux outils de qualité en local et en CI.
 
 ## Développement
 
-Aucune étape de build ni dépendance. Ouvrir `index.html` dans un navigateur, ou servir le dossier :
+Servir le dossier localement :
 
 ```bash
 python -m http.server 8000   # puis http://localhost:8000
 ```
 
+Lancer les vérifications de qualité (nécessite Node.js) :
+
+```bash
+npm install        # installe les outils de lint
+npm run lint       # HTML (htmlhint + html-validate) + CSS (stylelint) + JS (eslint)
+```
+
+## Intégration continue (GitHub Actions)
+
+Le workflow `.github/workflows/ci.yml` s'exécute à chaque `push` et `pull request` sur `main` :
+
+| Job | Rôle |
+|-----|------|
+| **lint** | Validation + lint HTML / CSS / JS (`npm ci` puis `npm run lint`) |
+| **links** | Détection des liens morts (lychee ; LinkedIn et Malt exclus car bloquent les bots) |
+| **lighthouse** | Audit performance / accessibilité / bonnes pratiques (SEO ignoré à cause du noindex) |
+
+Les seuils Lighthouse sont en mode `warn` (informatif, ne bloque pas). Pour les rendre bloquants, passer les assertions de `lighthouserc.json` de `warn` à `error`.
+
 ## Déploiement
 
 Site 100 % statique : déployable tel quel sur **Vercel**, **Netlify**, **GitHub Pages** ou tout hébergeur statique. Il suffit de servir le dossier.
 
-> ⚠️ **Indexation désactivée** : `robots.txt` (Disallow: /) et la balise `<meta name="robots" content="noindex, nofollow">` empêchent le référencement par les moteurs de recherche. À retirer le jour où le site doit être visible sur Google.
+> ⚠️ **Indexation désactivée** : `robots.txt` (Disallow: /) et la balise `<meta name="robots" content="noindex, nofollow">` empêchent le référencement. À retirer le jour où le site doit être visible sur Google (le job SEO de Lighthouse est aussi désactivé pour cette raison).
 
 ## Note sur la police
 
