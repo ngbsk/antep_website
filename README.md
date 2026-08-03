@@ -1,4 +1,4 @@
-# antep — Site portfolio d'Audrey Ntep
+# antep — Site portfolio
 
 Portfolio statique bilingue **FR / EN**, aux couleurs de la marque **antep** (thème sombre : navy, teal, rose, orange).
 
