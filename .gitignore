@@ -1,8 +1,10 @@
-# Tooling / scratch (non liés au site)
+# Dépendances
 node_modules/
-package.json
-package-lock.json
-shot*.mjs
-*.png
-logo_b64.txt
+
+# Système
 .DS_Store
+Thumbs.db
+
+# Éditeurs
+.vscode/
+.idea/
