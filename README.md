@@ -11,7 +11,8 @@ antep_website/
 ├── script.js               # Interactions : bascule FR/EN, menu, filtres, animations — commenté
 ├── logo.png                # Logo AN (nav + favicon)
 ├── robots.txt              # Directives crawlers (indexation bloquée)
-├── package.json            # Outils de qualité (dev uniquement, aucun runtime)
+├── build-guide.mjs         # Injection build-time du manifeste du guide-avatar
+├── package.json            # Outils de qualité + build:guide (dev uniquement, aucun runtime)
 ├── .htmlhintrc / .htmlvalidate.json / .stylelintrc.json / eslint.config.mjs
 ├── lighthouserc.json       # Config de l'audit Lighthouse
 └── .github/workflows/ci.yml
@@ -45,6 +46,34 @@ Le workflow `.github/workflows/ci.yml` s'exécute à chaque `push` et `pull requ
 | **lighthouse** | Audit performance / accessibilité / bonnes pratiques (SEO ignoré à cause du noindex) |
 
 Les seuils Lighthouse sont en mode `warn` (informatif, ne bloque pas). Pour les rendre bloquants, passer les assertions de `lighthouserc.json` de `warn` à `error`.
+
+## Guide-avatar — injection build-time du manifeste
+
+Le site embarque (à terme) un avatar-guide qui narre le contenu. Les zones et
+narrations sont gérées côté **API guide** (repo séparé `antep-guide-api`) ; leur
+**manifeste public** est injecté dans `index.html` **au build**, pas appelé au
+runtime — le site reste 100 % statique et fonctionne même si l'API est éteinte.
+
+`build-guide.mjs` récupère `GET /api/guide/manifest` et écrit le résultat entre
+les marqueurs `<!-- GUIDE:MANIFEST:START/END -->` sous la forme d'un
+`<script id="guide-manifest" type="application/json">`. Le widget avatar le lira
+via `JSON.parse(document.getElementById('guide-manifest').textContent)`.
+
+```bash
+GUIDE_API_BASE=https://guide-api.antep.fr npm run build:guide
+```
+
+- **Sûr** : le JSON est échappé (`<`, `>`, `&`) — un `</script>` dans une
+  narration ne peut pas casser la page.
+- **Robuste** : si l'API est injoignable, `index.html` est **laissé inchangé**
+  (le dernier manifeste injecté est conservé) et le build ne casse pas.
+- **Idempotent** : relancer remplace le bloc, sans le dupliquer.
+
+Intégration au déploiement : exécuter `npm run build:guide` **avant** de publier.
+Sur Vercel, en *Build Command* (`npm run build:guide`) avec la variable
+d'environnement `GUIDE_API_BASE`. En CI/GitHub Pages, ajouter une étape avant le
+déploiement. Éditer une zone dans l'admin puis relancer le build (ou le
+redéploiement) suffit à rafraîchir le manifeste servi.
 
 ## Déploiement
 

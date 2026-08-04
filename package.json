@@ -4,6 +4,7 @@
   "private": true,
   "description": "Site portfolio d'Audrey Ntep — HTML/CSS/JS statique, bilingue FR/EN",
   "scripts": {
+    "build:guide": "node build-guide.mjs",
     "lint:html": "htmlhint index.html",
     "validate:html": "html-validate index.html",
     "lint:css": "stylelint styles.css",
