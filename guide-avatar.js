@@ -10,8 +10,11 @@
          - desktop (souris)  : le survol prolongé (dwell) complète en plus.
      • Garde-fou : dès que TOUTES les zones ont été lancées (même interrompues),
        le mode auto s'éteint (desktop ET mobile). Plus aucune narration spontanée.
-     • Porte-voix : un petit bouton SVG (mégaphone) injecté à côté du `.sec-tag`
-       de chaque section, TOUJOURS actif, pour (ré)écouter à la demande.
+     • Casque : un bouton SVG (casque audio) injecté à DROITE du `.sec-tag` de
+       chaque section, TOUJOURS actif, pour écouter à la demande (même avatar off).
+     • Avatar pilotable : si `manifest.avatarEnabled === false` (réglage admin) ou
+       si l'utilisateur ferme via ×, l'avatar et la narration auto disparaissent —
+       mais les casques restent accessibles (mode audio à la demande).
 
    Autres : lip-sync des visèmes (Azure 0..21), émotion par zone, i18n FR/EN
    (document.documentElement.lang observé), interruption, a11y, reduced-motion,
@@ -58,12 +61,12 @@
     enthousiaste: { brow: 0.35, eye: 1.15, smile: 0.62, tilt: -2 }
   };
 
-  // Mégaphone (icône « porte-voix », style Lucide).
-  var MEGAPHONE =
+  // Casque audio (icône d'écoute, style Lucide).
+  var HEADPHONES =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
     'stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%">' +
-    '<path d="m3 11 18-5v12L3 14v-3z"/>' +
-    '<path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>';
+    '<path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5a9 9 0 0 1 18 0v5' +
+    'a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>';
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function lerp(a, b, t) { return a + (b - a) * t; }
@@ -190,9 +193,16 @@
     this.audio.preload = "none"; // jamais de préchargement (données mobiles)
     this.lang = (document.documentElement.lang || "fr").slice(0, 2) === "en" ? "en" : "fr";
     this.looping = false;        // la boucle rAF ne démarre qu'à l'activation (perf)
-    this._buildDom();
-    this._injectMegaphones();
-    this._wire();
+    this.dismissed = false;      // l'utilisateur a fermé l'avatar (×)
+    this.io = null;              // IntersectionObserver (scroll-into-view)
+    // Avatar pilotable depuis l'admin (manifest.avatarEnabled). Défaut : true.
+    // Si désactivé : pas d'avatar ni de narration auto, mais les casques restent.
+    this.avatarEnabled = manifest.avatarEnabled !== false;
+    this._injectHeadphones();    // casques par section : TOUJOURS injectés
+    if (this.avatarEnabled) {
+      this._buildDom();
+      this._wire();              // avatar + déclencheurs auto (survol / scroll)
+    }
   }
 
   Avatar.prototype._buildDom = function () {
@@ -259,8 +269,8 @@
     document.body.appendChild(host);
   };
 
-  // Injecte un bouton « porte-voix » à côté du .sec-tag de chaque section.
-  Avatar.prototype._injectMegaphones = function () {
+  // Injecte un bouton « casque » à droite du .sec-tag de chaque section.
+  Avatar.prototype._injectHeadphones = function () {
     var self = this;
     var st = document.createElement("style");
     st.textContent =
@@ -286,12 +296,14 @@
       var label = (tag.textContent || "").replace(/[^0-9a-zà-ÿ ]/gi, " ").trim();
       b.setAttribute("aria-label", label ? "Écouter la section " + label : "Écouter cette section");
       b.title = "Écouter";
-      b.innerHTML = MEGAPHONE;
+      b.innerHTML = HEADPHONES;
       b.addEventListener("click", function () {
-        self._ensureActive();
+        // Si l'avatar est autorisé et non fermé, on le monte (visage + idle) ;
+        // sinon on joue juste l'audio (mode casque, sans avatar).
+        if (self.avatarEnabled && !self.dismissed) self._ensureActive();
         self.playZone(z.key);           // manuel : joue toujours
       });
-      if (tag.parentNode) tag.parentNode.insertBefore(b, tag.nextSibling);
+      tag.appendChild(b);               // à DROITE du texte du .sec-tag
       self.sayBtns[z.key] = b;
     });
   };
@@ -346,6 +358,7 @@
           if (en.isIntersecting) self._scrollCandidate(en.target.getAttribute("data-guide-key"));
         });
       }, { rootMargin: "-45% 0px -45% 0px", threshold: 0 });
+      this.io = io;                     // gardé pour pouvoir le couper au × (hide)
       this.zones.forEach(function (z) {
         var el = document.querySelector(z.selector);
         if (el) { el.setAttribute("data-guide-key", z.key); io.observe(el); }
@@ -412,7 +425,7 @@
 
   Avatar.prototype.playZone = function (key) {
     var z = this.byKey[key];
-    if (!z || !this.active) return;
+    if (!z) return;   // joue même sans avatar actif (mode casque) ; l'auto est bridé côté déclencheurs
     var n = z.narrations && (z.narrations[this.lang] || z.narrations.fr || z.narrations.en);
     if (!n || !n.audioUrl) return;
     this._markPlayed(key);
@@ -458,14 +471,24 @@
   };
 
   Avatar.prototype.hide = function () {
+    // Ferme l'avatar ET coupe la narration auto (scroll-into-view + dwell).
+    // Les casques par section restent actifs pour écouter à la demande.
+    this.dismissed = true;
+    this.active = false;
+    this.current = null;
     try { this.audio.pause(); } catch (e) {}
     this._cancelDwell();
+    if (this.io) { this.io.disconnect(); this.io = null; }
+    var k;
+    for (k in this.sayBtns) if (this.sayBtns[k]) this.sayBtns[k].classList.remove("playing");
     if (this.host && this.host.parentNode) this.host.parentNode.removeChild(this.host);
+    this.face = null;
   };
 
   Avatar.prototype._loop = function () {
     var self = this, t0 = performance.now();
     function frame(ts) {
+      if (self.dismissed) return;      // × : arrête la boucle rAF
       if (self.face) {
         if (self.current && !self.audio.paused && self.visemes) {
           var ms = self.audio.currentTime * 1000, tr = self.visemes;
