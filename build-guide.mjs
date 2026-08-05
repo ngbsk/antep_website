@@ -47,7 +47,17 @@ async function fetchManifest() {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, { headers: { accept: "application/json" }, signal: ctrl.signal });
+    const res = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        // UA de navigateur : sans lui, Cloudflare bloque les requetes
+        // automatisees (erreur 1010) avant meme d'atteindre l'API.
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      },
+      signal: ctrl.signal,
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } finally {
