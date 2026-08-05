@@ -189,10 +189,10 @@
     this.audio = new Audio();
     this.audio.preload = "none"; // jamais de préchargement (données mobiles)
     this.lang = (document.documentElement.lang || "fr").slice(0, 2) === "en" ? "en" : "fr";
+    this.looping = false;        // la boucle rAF ne démarre qu'à l'activation (perf)
     this._buildDom();
     this._injectMegaphones();
     this._wire();
-    this._loop();
   }
 
   Avatar.prototype._buildDom = function () {
@@ -265,7 +265,8 @@
     var st = document.createElement("style");
     st.textContent =
       ".antep-guide-say{display:inline-flex;align-items:center;justify-content:center;" +
-      "vertical-align:middle;margin-left:8px;width:1.4em;height:1.4em;padding:2px;" +
+      "vertical-align:middle;margin-left:8px;width:1.5em;height:1.5em;" +
+      "min-width:24px;min-height:24px;padding:3px;" +      // cible tactile ≥ 24px (WCAG 2.5.8)
       "border:0;background:transparent;color:#ff8a3d;cursor:pointer;border-radius:6px;" +
       "line-height:0;transition:transform .15s,color .15s}" +
       ".antep-guide-say:hover{transform:scale(1.18)}" +
@@ -281,7 +282,9 @@
       var b = document.createElement("button");
       b.type = "button";
       b.className = "antep-guide-say";
-      b.setAttribute("aria-label", "Écouter la présentation de cette section");
+      // Libellé a11y dérivé du .sec-tag (« // about » -> « Écouter la section about »).
+      var label = (tag.textContent || "").replace(/[^0-9a-zà-ÿ ]/gi, " ").trim();
+      b.setAttribute("aria-label", label ? "Écouter la section " + label : "Écouter cette section");
       b.title = "Écouter";
       b.innerHTML = MEGAPHONE;
       b.addEventListener("click", function () {
@@ -310,12 +313,20 @@
       // Desktop (souris) : le regard suit le pointeur + survol prolongé (dwell)
       // comme déclencheur SUPPLÉMENTAIRE. Le scroll-into-view ci-dessous reste
       // actif partout ; le garde-fou « une fois par section » évite les doublons.
-      window.addEventListener("pointermove", function (e) {
+      // Perf : le centre de la carte (position fixed) est mis en cache et
+      // recalculé au resize, pour éviter une lecture de layout à chaque mousemove.
+      var cardCx = 0, cardCy = 0;
+      function updateCardCenter() {
         var r = self.card.getBoundingClientRect();
-        var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-        var nx = clamp((e.clientX - cx) / (window.innerWidth * 0.5), -1, 1);
-        var ny = clamp((e.clientY - cy) / (window.innerHeight * 0.5), -1, 1);
-        if (self.face) self.face.setEyes(nx, ny);
+        cardCx = r.left + r.width / 2; cardCy = r.top + r.height / 2;
+      }
+      updateCardCenter();
+      window.addEventListener("resize", updateCardCenter, { passive: true });
+      window.addEventListener("pointermove", function (e) {
+        if (!self.face) return;
+        var nx = clamp((e.clientX - cardCx) / (window.innerWidth * 0.5), -1, 1);
+        var ny = clamp((e.clientY - cardCy) / (window.innerHeight * 0.5), -1, 1);
+        self.face.setEyes(nx, ny);
       }, { passive: true });
 
       this.zones.forEach(function (z) {
@@ -373,6 +384,7 @@
     this.faceSlot.classList.remove("hidden");
     this.controls.classList.remove("hidden");
     this.face = new Face(this.faceSlot);
+    if (!this.looping) { this.looping = true; this._loop(); }   // démarre le rAF ici
     if (!REDUCED) {
       var self = this;
       (function blinkLoop() {
