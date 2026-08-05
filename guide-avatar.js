@@ -1,39 +1,43 @@
 /* =========================================================================
    antep — Guide-avatar (Web Component, rendu placeholder SVG)
    -------------------------------------------------------------------------
-   Couche 1 « orchestration » du guide-avatar, INDÉPENDANTE de Rive :
-     • lit le manifeste injecté (<script id="guide-manifest">) ;
-     • affiche un visage SVG « vivant » (yeux qui suivent le pointeur,
-       clignement, respiration) monté en position fixed ;
-     • bouton d'activation (déverrouillage audio par geste utilisateur) ;
-     • au survol prolongé (dwell) d'une zone : joue l'audio + lip-sync des
-       visèmes (Azure 0..21 réduits à des paramètres de bouche) + émotion ;
-     • i18n FR/EN via document.documentElement.lang (observé en direct) ;
-     • interruption (nouvelle zone), repli tactile (tap), a11y, reduced-motion ;
-     • dégrade en silence si le manifeste, l'audio ou les visèmes manquent.
+   Couche 1 « orchestration » du guide-avatar, INDÉPENDANTE de Rive.
 
-   Le rendu SVG est un PLACEHOLDER : toute cette logique est réutilisable telle
-   quelle quand on branchera le vrai personnage Rive (.riv). Il suffira de
-   remplacer la couche `Face` (rendu) en gardant les mêmes entrées :
-     setEyes(x,y) · setMouth(open,wide,round) · setEmotion(name) · blink() …
+   Modèle d'interaction :
+     • Auto (dès l'activation), CHAQUE section une seule fois :
+         - desktop  : survol prolongé (dwell) d'une section ;
+         - mobile   : section qui arrive au centre de l'écran (scroll-into-view,
+                      IntersectionObserver).
+     • Garde-fou : dès que TOUTES les zones ont été lancées (même interrompues),
+       le mode auto s'éteint (desktop ET mobile). Plus aucune narration spontanée.
+     • Porte-voix : un petit bouton SVG (mégaphone) injecté à côté du `.sec-tag`
+       de chaque section, TOUJOURS actif, pour (ré)écouter à la demande.
 
-   Intégration : <script src="guide-avatar.js" defer><\/script> — le composant
-   s'auto-monte si un manifeste est présent. Aucune dépendance externe.
+   Autres : lip-sync des visèmes (Azure 0..21), émotion par zone, i18n FR/EN
+   (document.documentElement.lang observé), interruption, a11y, reduced-motion,
+   audio jamais préchargé (fetch au déclenchement). Dégrade en silence si le
+   manifeste / l'audio / les visèmes manquent.
+
+   Le rendu SVG est un PLACEHOLDER : cette logique est réutilisable telle quelle
+   quand on branchera le vrai personnage Rive (.riv) — il suffira de remplacer la
+   couche `Face` en gardant setEyes / setMouth / setEmotion / blink.
+
+   Intégration : <script src="guide-avatar.js" defer><\/script> (auto-montage).
    ========================================================================= */
 (function () {
   "use strict";
 
   // --- Réglages ------------------------------------------------------------
-  var DWELL_MS = 450;          // survol minimal avant de déclencher la narration
-  var EYE_MAX = 3.2;           // amplitude max du déplacement des pupilles (px SVG)
-  var LERP = 0.22;             // vitesse d'interpolation (0..1) vers les cibles
+  var DWELL_MS = 450;          // survol minimal (desktop) avant narration
+  var SCROLL_MS = 450;         // stabilisation du scroll (mobile) avant narration
+  var EYE_MAX = 3.2;
+  var LERP = 0.22;
   var REDUCED = window.matchMedia &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var NO_HOVER = window.matchMedia &&
     window.matchMedia("(hover: none)").matches;
 
-  // --- Visèmes Azure (0..21) -> paramètres de bouche {open,wide,round} -----
-  // Placeholder phonétiquement approximatif : suffisant pour un lip-sync lisible.
+  // --- Visèmes Azure (0..21) -> {open,wide,round} --------------------------
   var VISEME = {
     0:  [0.00, 0.35, 0.20], 1:  [0.50, 0.50, 0.10], 2:  [0.90, 0.40, 0.10],
     3:  [0.70, 0.25, 0.60], 4:  [0.42, 0.55, 0.20], 5:  [0.32, 0.45, 0.30],
@@ -45,9 +49,7 @@
     21: [0.00, 0.42, 0.20]
   };
 
-  // --- Émotion antep -> expression {brow, eye, smile, tilt} ----------------
-  // brow: hauteur des sourcils (+ = levés) ; eye: ouverture ; smile: courbe
-  // des commissures (+ = sourire) ; tilt: inclinaison de tête (deg).
+  // --- Émotion antep -> {brow, eye, smile, tilt} ---------------------------
   var EMOTION = {
     neutre:       { brow: 0.00, eye: 1.00, smile: 0.12, tilt: 0 },
     fier:         { brow: 0.15, eye: 1.00, smile: 0.30, tilt: 0 },
@@ -56,17 +58,23 @@
     enthousiaste: { brow: 0.35, eye: 1.15, smile: 0.62, tilt: -2 }
   };
 
+  // Mégaphone (icône « porte-voix », style Lucide).
+  var MEGAPHONE =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" style="width:100%;height:100%">' +
+    '<path d="m3 11 18-5v12L3 14v-3z"/>' +
+    '<path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>';
+
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function lerp(a, b, t) { return a + (b - a) * t; }
 
   // =======================================================================
-  // Face — rendu SVG placeholder. Seule couche à remplacer pour passer à Rive.
+  // Face — rendu SVG placeholder (seule couche à remplacer pour Rive).
   // =======================================================================
   function Face(root) {
     var NS = "http://www.w3.org/2000/svg";
     var svg = document.createElementNS(NS, "svg");
     svg.setAttribute("viewBox", "0 0 120 120");
-    svg.setAttribute("part", "face");
     svg.setAttribute("aria-hidden", "true");
     svg.style.width = "100%";
     svg.style.height = "100%";
@@ -104,12 +112,11 @@
     this.browR = svg.querySelector("#browR");
     this.mouth = svg.querySelector("#mouth");
 
-    // Cibles animées (interpolées dans le rAF de l'orchestrateur).
     this.tEyeX = 0; this.tEyeY = 0; this.cEyeX = 0; this.cEyeY = 0;
     this.tOpen = 0; this.tWide = 0.35; this.tRound = 0.2;
     this.cOpen = 0; this.cWide = 0.35; this.cRound = 0.2;
     this.emo = EMOTION.neutre;
-    this.blinkK = 1;            // 1 = ouvert, 0 = fermé
+    this.blinkK = 1;
   }
   Face.prototype.setEyes = function (x, y) { this.tEyeX = x; this.tEyeY = y; };
   Face.prototype.setMouth = function (o, w, r) { this.tOpen = o; this.tWide = w; this.tRound = r; };
@@ -123,7 +130,6 @@
     this.cRound = lerp(this.cRound, this.tRound, t);
     var e = this.emo;
 
-    // Yeux : pupilles décalées vers le pointeur + clignement (scale Y).
     var dx = this.cEyeX * EYE_MAX, dy = this.cEyeY * EYE_MAX;
     this.pupL.setAttribute("cx", 44 + dx); this.pupL.setAttribute("cy", 56 + dy);
     this.pupR.setAttribute("cx", 76 + dx); this.pupR.setAttribute("cy", 56 + dy);
@@ -131,12 +137,10 @@
     this.eyeL.setAttribute("transform", "translate(44 56) scale(1 " + sy + ") translate(-44 -56)");
     this.eyeR.setAttribute("transform", "translate(76 56) scale(1 " + sy + ") translate(-76 -56)");
 
-    // Sourcils : hauteur selon l'émotion.
     var by = -e.brow * 6;
     this.browL.setAttribute("transform", "translate(0 " + by + ")");
     this.browR.setAttribute("transform", "translate(0 " + by + ")");
 
-    // Bouche : lentille paramétrée (open/wide) + sourire (émotion).
     var cx = 60, cy = 84;
     var W = 20 * (0.5 + 0.5 * this.cWide) * (1 - 0.35 * this.cRound);
     var H = 20 * this.cOpen + 1.5;
@@ -147,7 +151,6 @@
             " Q " + cx + " " + (cy + H / 2) + " " + xL + " " + yC + " Z";
     this.mouth.setAttribute("d", d);
 
-    // Tête : inclinaison émotionnelle + respiration.
     this.head.setAttribute("transform",
       "translate(60 62) rotate(" + e.tilt + ") scale(" + breathe + ") translate(-60 -62)");
   };
@@ -156,7 +159,7 @@
     var self = this, t0 = null;
     function step(ts) {
       if (t0 === null) t0 = ts;
-      var k = (ts - t0) / 140;                 // ~140 ms
+      var k = (ts - t0) / 140;
       self.blinkK = k < 0.5 ? 1 - k * 2 : (k - 0.5) * 2;
       if (k < 1) requestAnimationFrame(step); else self.blinkK = 1;
     }
@@ -164,7 +167,7 @@
   };
 
   // =======================================================================
-  // Avatar — orchestration (montage, activation, dwell, audio, lip-sync…).
+  // Avatar — orchestration.
   // =======================================================================
   function Avatar(manifest) {
     this.zones = manifest.zones || [];
@@ -174,13 +177,20 @@
     this.active = false;
     this.muted = false;
     this.dwellTimer = null;
-    this.current = null;        // clé de zone en cours de lecture
-    this.visemes = null;        // piste de visèmes chargée
+    this.scrollTimer = null;
+    this.cand = null;
+    this.current = null;
+    this.visemes = null;
     this.visIdx = 0;
+    this.played = {};            // clés déjà lancées (garde-fou)
+    this.playedCount = 0;
+    this.autoOff = false;        // mode auto éteint une fois tout lancé
+    this.sayBtns = {};           // key -> bouton porte-voix
     this.audio = new Audio();
-    this.audio.preload = "auto";
+    this.audio.preload = "none"; // jamais de préchargement (données mobiles)
     this.lang = (document.documentElement.lang || "fr").slice(0, 2) === "en" ? "en" : "fr";
     this._buildDom();
+    this._injectMegaphones();
     this._wire();
     this._loop();
   }
@@ -215,6 +225,9 @@
       "box-shadow:0 2px 8px rgba(0,0,0,.4)}" +
       ".controls button:focus-visible{outline:2px solid #ff8a3d}" +
       ".hidden{display:none}" +
+      "@media (max-width:640px){.wrap{right:12px;bottom:12px}" +
+      ".card{width:90px;height:90px}.activate{font-size:9px;gap:3px}" +
+      ".activate svg{width:18px;height:18px}.controls button{width:24px;height:24px}}" +
       "@media (prefers-reduced-motion: reduce){.activate{animation:none}}";
     var style = document.createElement("style");
     style.textContent = css;
@@ -237,7 +250,6 @@
     sh.appendChild(wrap);
 
     this.host = host;
-    this.wrap = wrap;
     this.card = wrap.querySelector(".card");
     this.btnActivate = wrap.querySelector(".activate");
     this.faceSlot = wrap.querySelector(".face-slot");
@@ -247,22 +259,55 @@
     document.body.appendChild(host);
   };
 
+  // Injecte un bouton « porte-voix » à côté du .sec-tag de chaque section.
+  Avatar.prototype._injectMegaphones = function () {
+    var self = this;
+    var st = document.createElement("style");
+    st.textContent =
+      ".antep-guide-say{display:inline-flex;align-items:center;justify-content:center;" +
+      "vertical-align:middle;margin-left:8px;width:1.4em;height:1.4em;padding:2px;" +
+      "border:0;background:transparent;color:#ff8a3d;cursor:pointer;border-radius:6px;" +
+      "line-height:0;transition:transform .15s,color .15s}" +
+      ".antep-guide-say:hover{transform:scale(1.18)}" +
+      ".antep-guide-say:focus-visible{outline:2px solid #ff8a3d;outline-offset:2px}" +
+      ".antep-guide-say.playing{color:#ff4d8d}";
+    document.head.appendChild(st);
+
+    this.zones.forEach(function (z) {
+      var sec = document.querySelector(z.selector);
+      if (!sec) return;
+      var tag = sec.querySelector(".sec-tag");
+      if (!tag) return;                 // pas d'ancre (ex. #top) -> pas de bouton
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "antep-guide-say";
+      b.setAttribute("aria-label", "Écouter la présentation de cette section");
+      b.title = "Écouter";
+      b.innerHTML = MEGAPHONE;
+      b.addEventListener("click", function () {
+        self._ensureActive();
+        self.playZone(z.key);           // manuel : joue toujours
+      });
+      if (tag.parentNode) tag.parentNode.insertBefore(b, tag.nextSibling);
+      self.sayBtns[z.key] = b;
+    });
+  };
+
   Avatar.prototype._wire = function () {
     var self = this;
 
-    // Activation : geste utilisateur -> déverrouille l'audio + salutation.
     this.btnActivate.addEventListener("click", function () { self.activate(); });
     this.btnMute.addEventListener("click", function () { self.toggleMute(); });
     this.btnClose.addEventListener("click", function () { self.hide(); });
 
-    // Langue : suit document.documentElement.lang (bascule FR/EN du site).
+    // Langue : suit document.documentElement.lang.
     var mo = new MutationObserver(function () {
       self.lang = (document.documentElement.lang || "fr").slice(0, 2) === "en" ? "en" : "fr";
     });
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
 
-    // Pointeur -> direction du regard (centré sur la carte).
     if (!NO_HOVER) {
+      // Desktop : regard suit le pointeur + auto par survol prolongé (dwell).
       window.addEventListener("pointermove", function (e) {
         var r = self.card.getBoundingClientRect();
         var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
@@ -270,29 +315,31 @@
         var ny = clamp((e.clientY - cy) / (window.innerHeight * 0.5), -1, 1);
         if (self.face) self.face.setEyes(nx, ny);
       }, { passive: true });
-    }
 
-    // Zones : survol prolongé (dwell) -> narration ; sortie -> annule le dwell.
-    // Repli tactile : tap sur la zone (hors lien/bouton) -> narration.
-    this.zones.forEach(function (z) {
-      var el = document.querySelector(z.selector);
-      if (!el) return;
-      if (!NO_HOVER) {
+      this.zones.forEach(function (z) {
+        var el = document.querySelector(z.selector);
+        if (!el) return;
         el.addEventListener("pointerenter", function () { self._dwell(z.key); });
         el.addEventListener("pointerleave", function () { self._cancelDwell(); });
-      } else {
-        el.addEventListener("click", function (ev) {
-          var t = ev.target;
-          if (t.closest && t.closest("a,button,input,textarea,select,label")) return;
-          if (self.active) self.playZone(z.key);
-        }, { passive: true });
-      }
-    });
+      });
+    } else if ("IntersectionObserver" in window) {
+      // Mobile : auto quand une section arrive au centre de l'écran.
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (en.isIntersecting) self._scrollCandidate(en.target.getAttribute("data-guide-key"));
+        });
+      }, { rootMargin: "-45% 0px -45% 0px", threshold: 0 });
+      this.zones.forEach(function (z) {
+        var el = document.querySelector(z.selector);
+        if (el) { el.setAttribute("data-guide-key", z.key); io.observe(el); }
+      });
+    }
   };
 
+  // Auto desktop (survol).
   Avatar.prototype._dwell = function (key) {
     var self = this;
-    if (!this.active) return;
+    if (!this.active || this.autoOff || this.played[key]) return;
     this._cancelDwell();
     this.dwellTimer = setTimeout(function () { self.playZone(key); }, DWELL_MS);
   };
@@ -300,14 +347,24 @@
     if (this.dwellTimer) { clearTimeout(this.dwellTimer); this.dwellTimer = null; }
   };
 
-  Avatar.prototype.activate = function () {
+  // Auto mobile (scroll-into-view, stabilisé).
+  Avatar.prototype._scrollCandidate = function (key) {
+    var self = this;
+    this.cand = key;
+    if (this.scrollTimer) clearTimeout(this.scrollTimer);
+    this.scrollTimer = setTimeout(function () {
+      if (self.cand === key && self.active && !self.autoOff && !self.played[key]) self.playZone(key);
+    }, SCROLL_MS);
+  };
+
+  // Monte le visage sans jouer la salutation (utilisé par le porte-voix).
+  Avatar.prototype._ensureActive = function () {
     if (this.active) return;
     this.active = true;
     this.btnActivate.classList.add("hidden");
     this.faceSlot.classList.remove("hidden");
     this.controls.classList.remove("hidden");
     this.face = new Face(this.faceSlot);
-    // Clignement périodique (idle).
     if (!REDUCED) {
       var self = this;
       (function blinkLoop() {
@@ -315,9 +372,22 @@
         setTimeout(function () { if (self.face) self.face.blink(); blinkLoop(); }, wait);
       })();
     }
-    // Salutation : joue la zone d'accueil (geste -> déverrouille l'audio).
+  };
+
+  // Activation par le gros bouton : monte + salutation (zone d'accueil).
+  Avatar.prototype.activate = function () {
+    if (this.active) return;
+    this._ensureActive();
     var greet = this.byKey.hero ? "hero" : (this.zones[0] && this.zones[0].key);
     if (greet) this.playZone(greet);
+  };
+
+  Avatar.prototype._markPlayed = function (key) {
+    if (!this.played[key]) {
+      this.played[key] = 1;
+      this.playedCount++;
+      if (this.playedCount >= this.zones.length) this.autoOff = true;   // garde-fou
+    }
   };
 
   Avatar.prototype.playZone = function (key) {
@@ -325,15 +395,19 @@
     if (!z || !this.active) return;
     var n = z.narrations && (z.narrations[this.lang] || z.narrations.fr || z.narrations.en);
     if (!n || !n.audioUrl) return;
+    this._markPlayed(key);
     this.current = key;
     if (this.face) this.face.setEmotion(z.emotion);
 
-    // Interruption d'une éventuelle lecture en cours.
-    try { this.audio.pause(); } catch (e) {}
+    // État visuel du porte-voix (celui en cours seulement).
+    var k;
+    for (k in this.sayBtns) if (this.sayBtns[k]) this.sayBtns[k].classList.remove("playing");
+    if (this.sayBtns[key]) this.sayBtns[key].classList.add("playing");
+
+    try { this.audio.pause(); } catch (e) {}   // interruption
     this.visemes = null; this.visIdx = 0;
     var self = this;
 
-    // Charge la piste de visèmes (best-effort ; sans elle, on joue sans lip-sync).
     if (n.visemeUrl) {
       fetch(n.visemeUrl, { mode: "cors" })
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -346,7 +420,11 @@
     this.audio.src = n.audioUrl;
     this.audio.muted = this.muted;
     this.audio.onended = function () {
-      if (self.current === key) { self.current = null; if (self.face) self.face.setMouth(0, 0.35, 0.2); }
+      if (self.current === key) {
+        self.current = null;
+        if (self.face) self.face.setMouth(0, 0.35, 0.2);
+      }
+      if (self.sayBtns[key]) self.sayBtns[key].classList.remove("playing");
     };
     var p = this.audio.play();
     if (p && p.catch) p.catch(function () {/* autoplay bloqué : ignore */});
@@ -365,12 +443,10 @@
     if (this.host && this.host.parentNode) this.host.parentNode.removeChild(this.host);
   };
 
-  // Boucle de rendu : lip-sync (si audio en cours) + respiration + interpolation.
   Avatar.prototype._loop = function () {
     var self = this, t0 = performance.now();
     function frame(ts) {
       if (self.face) {
-        // Lip-sync : cherche le visème courant selon audio.currentTime.
         if (self.current && !self.audio.paused && self.visemes) {
           var ms = self.audio.currentTime * 1000, tr = self.visemes;
           while (self.visIdx < tr.length - 1 && tr[self.visIdx + 1].t <= ms) self.visIdx++;
@@ -378,7 +454,6 @@
           var v = VISEME[tr[self.visIdx].id] || VISEME[0];
           self.face.setMouth(v[0], v[1], v[2]);
         } else if (self.current && !self.audio.paused && !self.visemes) {
-          // Pas de piste : bouche « qui parle » pseudo-aléatoire pendant l'audio.
           var a = 0.25 + 0.35 * Math.abs(Math.sin(ts / 90));
           self.face.setMouth(a, 0.45, 0.2);
         } else if (!self.current) {
@@ -393,11 +468,11 @@
   };
 
   // =======================================================================
-  // Auto-montage : lit le manifeste injecté et instancie l'avatar.
+  // Auto-montage.
   // =======================================================================
   function boot() {
     var el = document.getElementById("guide-manifest");
-    if (!el) return;                     // pas de manifeste -> pas d'avatar
+    if (!el) return;
     var manifest;
     try { manifest = JSON.parse(el.textContent); } catch (e) { return; }
     if (!manifest || !manifest.zones || !manifest.zones.length) return;
