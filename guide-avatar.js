@@ -5,9 +5,9 @@
 
    Modèle d'interaction :
      • Auto (dès l'activation), CHAQUE section une seule fois :
-         - desktop  : survol prolongé (dwell) d'une section ;
-         - mobile   : section qui arrive au centre de l'écran (scroll-into-view,
-                      IntersectionObserver).
+         - scroll-into-view : section qui arrive au centre de l'écran
+           (IntersectionObserver) — actif sur TOUS les supports ;
+         - desktop (souris)  : le survol prolongé (dwell) complète en plus.
      • Garde-fou : dès que TOUTES les zones ont été lancées (même interrompues),
        le mode auto s'éteint (desktop ET mobile). Plus aucune narration spontanée.
      • Porte-voix : un petit bouton SVG (mégaphone) injecté à côté du `.sec-tag`
@@ -307,7 +307,9 @@
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
 
     if (!NO_HOVER) {
-      // Desktop : regard suit le pointeur + auto par survol prolongé (dwell).
+      // Desktop (souris) : le regard suit le pointeur + survol prolongé (dwell)
+      // comme déclencheur SUPPLÉMENTAIRE. Le scroll-into-view ci-dessous reste
+      // actif partout ; le garde-fou « une fois par section » évite les doublons.
       window.addEventListener("pointermove", function (e) {
         var r = self.card.getBoundingClientRect();
         var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
@@ -322,8 +324,12 @@
         el.addEventListener("pointerenter", function () { self._dwell(z.key); });
         el.addEventListener("pointerleave", function () { self._cancelDwell(); });
       });
-    } else if ("IntersectionObserver" in window) {
-      // Mobile : auto quand une section arrive au centre de l'écran.
+    }
+
+    // Scroll-into-view : auto quand une section arrive au centre de l'écran.
+    // Actif sur TOUS les supports (desktop inclus) — sur tactile c'est le seul
+    // déclencheur ; sur desktop il complète le survol.
+    if ("IntersectionObserver" in window) {
       var io = new IntersectionObserver(function (entries) {
         entries.forEach(function (en) {
           if (en.isIntersecting) self._scrollCandidate(en.target.getAttribute("data-guide-key"));
@@ -341,7 +347,9 @@
     var self = this;
     if (!this.active || this.autoOff || this.played[key]) return;
     this._cancelDwell();
-    this.dwellTimer = setTimeout(function () { self.playZone(key); }, DWELL_MS);
+    this.dwellTimer = setTimeout(function () {
+      if (!self.autoOff && !self.played[key]) self.playZone(key);   // re-check (anti-doublon)
+    }, DWELL_MS);
   };
   Avatar.prototype._cancelDwell = function () {
     if (this.dwellTimer) { clearTimeout(this.dwellTimer); this.dwellTimer = null; }
