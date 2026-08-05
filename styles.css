@@ -13,7 +13,7 @@
     --border:#2b2769;
     --text:#eceaf6;
     --text-dim:#a6a2c8;
-    --text-faint:#726d9e;
+    --text-faint:#7d79ac;  /* a11y : ~4.9:1 sur --bg (AA) ; était #726d9e (4.15:1, sous le seuil) */
     --accent:#f20574;      /* rose */
     --accent-2:#06d4b7;    /* teal */
     --accent-3:#f2a30f;    /* orange */
